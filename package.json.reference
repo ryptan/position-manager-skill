@@ -1,0 +1,13 @@
+{
+  "name": "position-manager-skill-scratch",
+  "private": true,
+  "description": "Reference dependency versions for any temporary Node.js/TypeScript script the agent writes to run the math in skill/clmm-math.md and skill/orca-analyzer.md. Copy this into a package.json in the scratch workspace and run `npm install` instead of installing unpinned `latest` versions — the Orca SDK has had breaking changes across major versions.",
+  "dependencies": {
+    "@orca-so/whirlpools-sdk": "^0.13.0",
+    "@orca-so/common-sdk": "^0.6.0",
+    "@coral-xyz/anchor": "0.31.1",
+    "@solana/web3.js": "^1.95.0",
+    "@solana/spl-token": "^0.4.0",
+    "decimal.js": "^10.4.0"
+  }
+}
