@@ -81,7 +81,8 @@ This skill is pure Markdown and requires no Node.js install or build step to fun
 To use it in a scratch workspace:
 
 ```bash
-mkdir scratch && cd scratch
+mkdir scratch
+cd scratch
 cp ../package.json.reference ./package.json
 npm install --legacy-peer-deps
 ```
