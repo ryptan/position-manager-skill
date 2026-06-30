@@ -28,15 +28,15 @@ This release focuses on a precise math engine plus the Orca Whirlpools integrati
 
 ## 📂 Architecture
 
-This skill follows the official Solana AI Kit structure for Claude Code skills:
+This skill follows the official Solana AI Kit structure for Claude Code skills (matching the `skill/SKILL.md` entry-point layout used by the reference `solana-game-skill` and `solana-dev-skill`):
 
 ```
 .
-├── SKILL.md                       # router: triggering description + main workflow
-├── skill/                         # The core skill module
-│   ├── clmm-math.md               # segmented IL/breakeven formulas + TypeScript reference
-│   ├── clmm-testing.md            # internal validation checks (axioms)
-│   └── orca-analyzer.md           # Orca Whirlpools SDK & RPC fetching patterns
+├── skill/                          # The installable skill module
+│   ├── SKILL.md                    # router: triggering description + main workflow
+│   ├── clmm-math.md                # segmented IL/breakeven formulas + TypeScript reference
+│   ├── clmm-testing.md             # internal validation checks (axioms)
+│   └── orca-analyzer.md            # Orca Whirlpools SDK & RPC fetching patterns
 ├── rules/
 │   └── execution-safety.md        # read-only & simulation rules loaded by default
 ├── commands/
@@ -62,13 +62,31 @@ chmod +x install.sh
 ./install.ps1
 ```
 
-This copies the `SKILL.md` and `skill/` folder into `.claude/skills/position-manager`, the rule into `.claude/rules/` (as `position-manager-execution-safety.md`), and the slash command into `.claude/commands/` (as `position-manager-analyze-breakeven.md`). The namespace prefix prevents silent overwrites when co-installed with other Solana AI Kit skills.
+This copies the contents of `skill/` (including `SKILL.md`, already the entry point inside that folder) into `~/.claude/skills/position-manager/`, the rule into `~/.claude/rules/` (as `position-manager-execution-safety.md`), and the slash command into `~/.claude/commands/` (as `position-manager-analyze-breakeven.md`). The namespace prefix on rules/commands prevents silent overwrites when co-installed with other Solana AI Kit skills.
 
 The skill triggers automatically based on its description, or you can invoke it explicitly:
 
 ```
 /position-manager-analyze-breakeven <position_mint_address> [protocol]
 ```
+
+### Codex / Other LLM Agents
+
+Because this skill is written entirely in Markdown, it is natively compatible with OpenAI Codex, Cursor, Copilot, and other LLM-based coding agents. Simply provide the `skill/` directory (it contains `SKILL.md` plus the rest of the reference files) directly into the agent's context (or system prompt), and it will seamlessly follow the exact same analytical instructions and math formulas without requiring any platform-specific plugins.
+
+### About `package.json.reference`
+
+This skill is pure Markdown and requires no Node.js install or build step to function inside an agent — the agent reads the `.md` files directly. `package.json.reference` exists only for the (optional) case where the agent writes a temporary Node.js/TypeScript scratch script to actually call the Orca SDK and verify a calculation. It is **not** a runnable `package.json` as committed — npm will not find it automatically, and there is intentionally no `package.json` at the repo root, since this isn't a Node.js project.
+
+To use it in a scratch workspace:
+
+```bash
+mkdir scratch && cd scratch
+cp ../package.json.reference ./package.json
+npm install --legacy-peer-deps
+```
+
+The pinned `@coral-xyz/anchor@0.29.0` version is load-bearing, not a suggestion — see the comment in the file and `orca-analyzer.md`'s "SDK Standard" section for why a newer Anchor breaks the SDK at import time. `devDependencies` include `typescript`/`ts-node`/`@types/node` so a `.ts` scratch file can be run directly with `npx ts-node script.ts`.
 
 ## 📄 License
 

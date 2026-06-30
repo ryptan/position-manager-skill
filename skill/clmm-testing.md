@@ -14,7 +14,7 @@ If Current Price ($P_c$) is above the upper boundary ($P_b$): The position must 
 
 *(The agent should trust the SDK's `PoolUtil.getTokenAmountsFromLiquidity` for these bounds, but must verify the output).*
 
-**Dependency**: $P_a$ and $P_b$ here must be the human-readable bounds derived via `skill/orca-analyzer.md` Step 2b — the inversion-and-reorder logic for when Token A is the Quote token (e.g. any USDC/SOL pool). Feeding raw tick-to-price conversions into this axiom directly, without that step, will misclassify the position for roughly half of all pools and make this check unreliable rather than protective.
+**Dependency**: $P_a$ and $P_b$ here must be the human-readable bounds derived via `orca-analyzer.md` Step 2b — the inversion-and-reorder logic for when Token A is the Quote token (e.g. any USDC/SOL pool). Feeding raw tick-to-price conversions into this axiom directly, without that step, will misclassify the position for roughly half of all pools and make this check unreliable rather than protective.
 
 ### Axiom 2: IL Negativity Constraint (Per-Segment)
 
@@ -23,7 +23,7 @@ Impermanent Loss (IL) for **each individual segment** must always be $\le 0$, wi
 The `analyzeSegmentedBreakeven` function returns a `segmentILs: Decimal[]` array. The agent MUST verify two separate thresholds:
 
 ```typescript
-import { IL_TOLERANCE } from './clmm-math';
+import { IL_TOLERANCE, totalILTolerance } from './clmm-math';
 
 // Check 1: Each individual segment IL must stay within IL_TOLERANCE.
 // Per-segment truncation error is bounded and small — IL_TOLERANCE is tight enough here.
@@ -32,15 +32,15 @@ if (!allWithinTolerance) {
     throw new Error("Sanity Check Failed: a per-segment IL exceeds the allowed tolerance.");
 }
 
-// Check 2: Total IL uses a scaled tolerance (IL_TOLERANCE per segment) because
-// truncation noise accumulates linearly with the number of segments.
+// Check 2: Total IL uses totalILTolerance(segmentCount) (exported from clmm-math.md)
+// because truncation noise accumulates linearly with the number of segments.
 // A position with 50 increase/decrease events can accumulate ~50× the per-segment
 // rounding noise without any of them being a real bug.
-const totalILTolerance = IL_TOLERANCE.mul(Math.max(1, result.segmentILs.length));
-if (result.totalImpermanentLoss.gt(totalILTolerance)) {
+const scaledTolerance = totalILTolerance(result.segmentILs.length);
+if (result.totalImpermanentLoss.gt(scaledTolerance)) {
     throw new Error(
         `Sanity Check Failed: Total IL (${result.totalImpermanentLoss}) exceeds ` +
-        `scaled tolerance (${totalILTolerance} = IL_TOLERANCE × ${result.segmentILs.length} segments).`
+        `scaled tolerance (${scaledTolerance} = IL_TOLERANCE × ${result.segmentILs.length} segments).`
     );
 }
 ```
@@ -60,7 +60,7 @@ If within a single segment, the user deposits at $P_0$ and the price drops to $P
 The agent should use this test template internally to verify the `analyzeSegmentedBreakeven` function (from `clmm-math.md`). Note the use of `D` (the cloned Decimal constructor) and `IL_TOLERANCE`, both exported from `clmm-math.md` — never construct test values with a bare `new Decimal(...)`.
 
 ```typescript
-import { analyzeSegmentedBreakeven, SegmentedMathConfig, D, IL_TOLERANCE } from './clmm-math';
+import { analyzeSegmentedBreakeven, SegmentedMathConfig, D, IL_TOLERANCE, totalILTolerance } from './clmm-math';
 
 function runSanityCheck() {
     // Mock Config: SOL/USDC pool, Token B is Quote (USDC), Token A is Base (SOL)
@@ -91,13 +91,13 @@ function runSanityCheck() {
         throw new Error("Sanity Check Failed: a per-segment IL exceeds tolerance.");
     }
 
-    // Test 2: Total IL uses scaled tolerance (IL_TOLERANCE × numSegments)
+    // Test 2: Total IL uses totalILTolerance(numSegments) (exported from clmm-math.md)
     // because rounding noise accumulates linearly across segments.
-    const totalILTolerance = IL_TOLERANCE.mul(Math.max(1, result.segmentILs.length));
-    if (result.totalImpermanentLoss.gt(totalILTolerance)) {
+    const scaledTolerance = totalILTolerance(result.segmentILs.length);
+    if (result.totalImpermanentLoss.gt(scaledTolerance)) {
         throw new Error(
             `Sanity Check Failed: Total IL (${result.totalImpermanentLoss}) exceeds ` +
-            `scaled tolerance (${totalILTolerance}).`
+            `scaled tolerance (${scaledTolerance}).`
         );
     }
     
@@ -228,8 +228,78 @@ function runMissingStartPriceGuardCheck() {
 }
 
 /**
+ * Multi-segment tolerance scaling check: with several segments, each carrying
+ * a small amount of rounding noise just under IL_TOLERANCE individually, the
+ * SUM can legitimately exceed a flat IL_TOLERANCE without any single segment
+ * being a bug. totalILTolerance(segmentCount) must accept this; a flat,
+ * unscaled IL_TOLERANCE check on the total would incorrectly fail it.
+ */
+function runMultiSegmentToleranceScalingCheck() {
+    // Five segments, each with the SAME tiny truncation-noise IL just under
+    // IL_TOLERANCE (1e-6). A flat per-total IL_TOLERANCE check would fail
+    // here (5 * ~9e-7 > 1e-6), but totalILTolerance(5) = 5e-6 must pass it.
+    const noisePerSegment = IL_TOLERANCE.mul("0.9"); // ~9e-7, just under IL_TOLERANCE
+    const segments: any[] = [];
+    let prevEnd = new D("100"); // shared price chain across segments, for realism
+
+    for (let i = 0; i < 5; i++) {
+        // tokenB_End is bumped by noisePerSegment above what HODLing tokenB_Start
+        // at the end price would give, simulating accumulated truncation dust.
+        segments.push({
+            tokenA_Start: new D("10"),
+            tokenB_Start: new D("1000"),
+            tokenA_End: new D("10"),
+            tokenB_End: new D("1000").plus(noisePerSegment),
+            priceBaseInQuote_End: prevEnd,
+            priceBaseInQuote_Start: i === 0 ? prevEnd : undefined
+        });
+    }
+
+    const mockConfig: SegmentedMathConfig = {
+        segments,
+        swapFeesIncome: new D("0"),
+        farmingRewardsIncome: new D("0"),
+        isTokenAQuote: false,
+        currentTokenA: new D("10"),
+        currentTokenB: new D("1000").plus(noisePerSegment),
+        currentPriceBaseInQuote: prevEnd
+    };
+
+    const result = analyzeSegmentedBreakeven(mockConfig);
+
+    // Each individual segment IL is within IL_TOLERANCE (the per-segment check passes).
+    if (result.segmentILs.some(il => il.gt(IL_TOLERANCE))) {
+        throw new Error("Multi-Segment Check Failed: an individual segment exceeded IL_TOLERANCE unexpectedly.");
+    }
+
+    // The SUM (5 * ~9e-7 ≈ 4.5e-6) exceeds a flat IL_TOLERANCE (1e-6) — this is
+    // the exact scenario totalILTolerance(segmentCount) exists to handle correctly.
+    if (result.totalImpermanentLoss.lte(IL_TOLERANCE)) {
+        throw new Error(
+            "Multi-Segment Check Setup Failed: this test is supposed to produce a total " +
+            "that exceeds the flat IL_TOLERANCE, to prove the scaled check is actually needed. " +
+            "If this throws, the test's noise values need adjusting."
+        );
+    }
+
+    // The scaled tolerance must accept it.
+    const scaledTolerance = totalILTolerance(result.segmentILs.length);
+    if (result.totalImpermanentLoss.gt(scaledTolerance)) {
+        throw new Error(
+            `Multi-Segment Check Failed: Total IL (${result.totalImpermanentLoss.toString()}) ` +
+            `exceeds scaled tolerance (${scaledTolerance.toString()}) even though each segment ` +
+            `individually passed — totalILTolerance(segmentCount) scaling is broken.`
+        );
+    }
+
+    console.log(`Multi-segment tolerance scaling check passed — total IL ${result.totalImpermanentLoss.toString()} accepted under scaled tolerance ${scaledTolerance.toString()} across ${segments.length} segments.`);
+}
+
+/**
  * Axiom 1 Validation: if price is below lower bound, position is 100% Base / 0% Quote.
  * If price is above upper bound, position is 0% Base / 100% Quote.
+ * Note: This check does not call `analyzeSegmentedBreakeven`, but serves as a self-contained
+ * conceptual proof that validates the math principle of Axiom 1 inline.
  */
 function runOutofRangeCompositionCheck() {
     // Mock: Pc = 90, Pa = 100, Pb = 200. Pc < Pa.
@@ -261,4 +331,4 @@ function runOutofRangeCompositionCheck() {
 }
 ```
 
-Run all five checks (`runSanityCheck`, `runQuoteOnTokenACheck`, `runReversibilityCheck`, `runMissingStartPriceGuardCheck`, `runOutofRangeCompositionCheck`) before trusting the module for a real position — each one exercises a different failure mode.
+Run all six checks (`runSanityCheck`, `runQuoteOnTokenACheck`, `runReversibilityCheck`, `runMissingStartPriceGuardCheck`, `runMultiSegmentToleranceScalingCheck`, `runOutofRangeCompositionCheck`) before trusting the module for a real position — each one exercises a different failure mode.

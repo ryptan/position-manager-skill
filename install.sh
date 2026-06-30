@@ -8,7 +8,7 @@ set -e
 
 echo "Installing CLMM Position Manager & Breakeven Analyzer Skill..."
 
-CLAUDE_DIR=".claude"
+CLAUDE_DIR="$HOME/.claude"
 SKILLS_DIR="$CLAUDE_DIR/skills"
 COMMANDS_DIR="$CLAUDE_DIR/commands"
 RULES_DIR="$CLAUDE_DIR/rules"
@@ -17,19 +17,18 @@ mkdir -p "$SKILLS_DIR"
 mkdir -p "$COMMANDS_DIR"
 mkdir -p "$RULES_DIR"
 
-# Copy the skill itself
-if [ -f "SKILL.md" ] && [ -d "skill" ]; then
-  # Create the skill directory inside position-manager
-  mkdir -p "$SKILLS_DIR/position-manager/skill"
-  cp SKILL.md "$SKILLS_DIR/position-manager/"
-  cp skill/*.md "$SKILLS_DIR/position-manager/skill/"
+# Copy the skill itself (skill/ already contains SKILL.md as its entry point,
+# matching the reference solana-game-skill / solana-dev-skill layout)
+if [ -f "skill/SKILL.md" ]; then
+  mkdir -p "$SKILLS_DIR/position-manager"
+  cp skill/*.md "$SKILLS_DIR/position-manager/"
   # Copy pinned dependency reference if present
   if [ -f "package.json.reference" ]; then
     cp package.json.reference "$SKILLS_DIR/position-manager/"
   fi
   echo "✅ Skill installed to $SKILLS_DIR/position-manager"
 else
-  echo "❌ Error: 'SKILL.md' or 'skill' directory not found."
+  echo "❌ Error: 'skill/SKILL.md' not found."
   exit 1
 fi
 

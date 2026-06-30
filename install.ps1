@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "Installing CLMM Position Manager & Breakeven Analyzer Skill..." -ForegroundColor Cyan
 
-$ClaudeDir = ".claude"
+$ClaudeDir = "$env:USERPROFILE/.claude"
 $SkillsDir = "$ClaudeDir/skills"
 $CommandsDir = "$ClaudeDir/commands"
 $RulesDir = "$ClaudeDir/rules"
@@ -16,19 +16,19 @@ New-Item -ItemType Directory -Force -Path $SkillsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $CommandsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $RulesDir | Out-Null
 
-# Copy the skill itself
-if ((Test-Path "SKILL.md") -and (Test-Path "skill")) {
-    $DestSkillDir = "$SkillsDir/position-manager/skill"
+# Copy the skill itself (skill/ already contains SKILL.md as its entry point,
+# matching the reference solana-game-skill / solana-dev-skill layout)
+if (Test-Path "skill/SKILL.md") {
+    $DestSkillDir = "$SkillsDir/position-manager"
     New-Item -ItemType Directory -Force -Path $DestSkillDir | Out-Null
-    Copy-Item "SKILL.md" "$SkillsDir/position-manager/" -Force
-    Copy-Item "skill/*" $DestSkillDir -Force -Recurse
+    Copy-Item "skill/*.md" $DestSkillDir -Force
     # Copy pinned dependency reference if present
     if (Test-Path "package.json.reference") {
-        Copy-Item "package.json.reference" "$SkillsDir/position-manager/" -Force
+        Copy-Item "package.json.reference" $DestSkillDir -Force
     }
-    Write-Host "✅ Skill installed to $SkillsDir/position-manager" -ForegroundColor Green
+    Write-Host "✅ Skill installed to $DestSkillDir" -ForegroundColor Green
 } else {
-    Write-Error "❌ Error: 'SKILL.md' or 'skill' directory not found."
+    Write-Error "❌ Error: 'skill/SKILL.md' not found."
     Exit 1
 }
 

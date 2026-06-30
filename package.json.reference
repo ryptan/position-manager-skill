@@ -1,13 +1,19 @@
 {
   "name": "position-manager-skill-scratch",
+  "version": "0.1.0",
   "private": true,
-  "description": "Reference dependency versions for any temporary Node.js/TypeScript script the agent writes to run the math in skill/clmm-math.md and skill/orca-analyzer.md. Copy this into a package.json in the scratch workspace and run `npm install` instead of installing unpinned `latest` versions — the Orca SDK has had breaking changes across major versions.",
+  "description": "Reference dependency versions for any temporary Node.js/TypeScript script the agent writes to run the math in skill/clmm-math.md and skill/orca-analyzer.md. Copy this into a package.json in the scratch workspace and run `npm install --legacy-peer-deps` instead of installing unpinned `latest` versions — the Orca SDK has had breaking changes across major versions. The Anchor pin below (0.29.0) is strongly recommended: @orca-so/whirlpools-sdk@0.13.x bundles an IDL that may crash at import time (`Error: Account not found: AdaptiveFeeTier`) under newer Anchor versions (like 0.31.x) — this can be a hard runtime failure, not just a peer-dependency warning, and --legacy-peer-deps does NOT fix it.",
   "dependencies": {
     "@orca-so/whirlpools-sdk": "^0.13.0",
     "@orca-so/common-sdk": "^0.6.0",
-    "@coral-xyz/anchor": "0.31.1",
+    "@coral-xyz/anchor": "0.29.0",
     "@solana/web3.js": "^1.95.0",
     "@solana/spl-token": "^0.4.0",
     "decimal.js": "^10.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
   }
 }

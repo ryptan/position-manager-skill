@@ -42,6 +42,17 @@ export const D = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_EVE
 // token's typical position size if needed.
 export const IL_TOLERANCE = new D("0.000001");
 
+// Tolerance for the SUM of all segment ILs. Per-segment truncation error is
+// bounded and small (IL_TOLERANCE), but a position with many liquidity
+// events (many segments) can legitimately accumulate up to ~IL_TOLERANCE of
+// noise PER segment — comparing the sum against the same per-segment value
+// is too strict and produces false failures on otherwise-correct data.
+// Centralized here (rather than recomputed inline in clmm-testing.md) so the
+// scaling rule can't silently drift between the two checks that use it.
+export function totalILTolerance(segmentCount: number): Decimal {
+    return IL_TOLERANCE.mul(Math.max(1, segmentCount));
+}
+
 export interface LiquiditySegment {
     // Token amounts exactly at the start of this segment (derived via SDK)
     tokenA_Start: Decimal;

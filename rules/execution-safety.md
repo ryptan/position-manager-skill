@@ -18,7 +18,7 @@ Assume the user wants a read-only analysis unless they explicitly use words like
 
 Impermanent Loss (IL) is mathematically constrained. It is the loss incurred by providing liquidity versus holding the assets.
 
-**Rule**: If your internal calculation of Impermanent Loss yields a positive number beyond a small tolerance for integer-math rounding noise — either for the total or for any individual segment — YOUR CALCULATION IS WRONG. (See `IL_TOLERANCE` in `skill/clmm-math.md` and Axiom 2 in `skill/clmm-testing.md` for the exact value and the full check — this file states the principle, those files are canonical for the threshold.) You likely swapped the decimals, the Base/Quote token order, or misconfigured `isTokenAQuote`. You MUST halt execution, recalculate, or inform the user of a data parsing error.
+**Rule**: If your internal calculation of Impermanent Loss yields a positive number beyond a small tolerance for integer-math rounding noise — either for an individual segment (`IL_TOLERANCE`) or for the total, which uses a tolerance scaled by the number of segments (`totalILTolerance(segmentCount)`, since per-segment noise can add up across many liquidity events) — YOUR CALCULATION IS WRONG. (See `skill/clmm-math.md` and Axiom 2 in `skill/clmm-testing.md` for the exact thresholds and the full check — this file states the principle, those files are canonical for the values.) You likely swapped the decimals, the Base/Quote token order, or misconfigured `isTokenAQuote`. You MUST halt execution, recalculate, or inform the user of a data parsing error.
 
 ### 4. Lexicographic Awareness
 

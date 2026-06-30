@@ -10,17 +10,20 @@ This document provides the standard operating procedures for the AI agent to fet
 
 **Lexicographic Sorting Awareness (CRITICAL)**: Solana CLMMs sort token pairs lexicographically by their mint addresses. Token A is not always the Base token, and Token B is not always the Quote token (e.g., USDC). You MUST identify which token is the stable/quote asset before calculating total fee values.
 
-**SDK Standard**: Always use the official `@orca-so/whirlpools-sdk` alongside `@solana/web3.js`, `@coral-xyz/anchor`, and `decimal.js`. This is the legacy-but-still-supported, officially-recommended Whirlpools SDK for projects on Solana Web3.js v1 (as opposed to `@orca-so/whirlpools` v2, which targets `@solana/kit`/Web3.js v2 — do not mix the two). If you need to write a temporary Node.js/TypeScript script to execute this math, install these pinned dependencies (see `package.json.reference` at the repo root for the exact versions this skill was validated against) rather than installing unpinned `latest`, since the SDK has had breaking changes across major versions:
+SDK Standard**: Always use the official `@orca-so/whirlpools-sdk` alongside `@solana/web3.js`, `@coral-xyz/anchor`, and `decimal.js`. This is the legacy-but-still-supported, officially-recommended Whirlpools SDK for projects on Solana Web3.js v1 (as opposed to `@orca-so/whirlpools` v2, which targets `@solana/kit`/Web3.js v2 — do not mix the two). If you need to write a temporary Node.js/TypeScript script to execute this math, use the pinned dependencies from `package.json.reference` at the repo root and install them using `npm install --legacy-peer-deps`. Do not install unpinned `latest` versions (the SDK has breaking changes), and **it is strongly recommended to use `@coral-xyz/anchor` 0.29.0** — newer versions may cause IDL parsing errors with older SDKs:
 
 ```
 @orca-so/whirlpools-sdk@^0.13
 @orca-so/common-sdk@^0.6
-@coral-xyz/anchor@0.31.1
+@coral-xyz/anchor@0.29.0
 @solana/web3.js@^1.95
+@solana/spl-token@^0.4
 decimal.js@^10.4
 ```
 
-> **SDK version note**: `^0.13` in npm semver only allows patch updates within 0.13.x — it will NOT automatically pick up 0.14 through 0.20. The latest published version as of this writing is 0.20.x. The 0.13.x pin is deliberate: `PoolUtil.getTokenAmountsFromLiquidity` and `PriceMath` have been stable across this range, but if you need to upgrade, **verify** those two APIs haven't changed before widening the range. If you are starting a new project (not patching an existing one), widening to `^0.13.0 || >=0.14.0 <1.0.0` is reasonable after running the test suite in `skill/clmm-testing.md`.
+> **Anchor version is load-bearing**: `@orca-so/whirlpools-sdk@0.13.x` bundles an IDL that may fail to parse under newer Anchor versions (like `0.31.x`) — importing the SDK can throw `Error: Account not found: AdaptiveFeeTier` immediately, before any RPC call is even made. The SDK's actual declared peer dependency is `anchor@0.29.0`, which imports correctly. `--legacy-peer-deps` only silences npm's dependency-tree warning during install. If a script using this SDK throws `Account not found: AdaptiveFeeTier` (or any similar "Account not found" error at the import/coder-construction stage), check `@coral-xyz/anchor`'s resolved version first and downgrade to `0.29.0`.
+
+> **SDK version note**: `^0.13` in npm semver only allows patch updates within 0.13.x — it will NOT automatically pick up 0.14 through 0.20. The latest published version as of this writing is 0.20.x. The 0.13.x pin is deliberate: `PoolUtil.getTokenAmountsFromLiquidity` and `PriceMath` have been stable across this range, but if you need to upgrade, **verify** those two APIs (and the required Anchor version, which may have changed in newer releases) haven't changed before widening the range. If you are starting a new project (not patching an existing one), widening to `^0.13.0 || >=0.14.0 <1.0.0` is reasonable after running the test suite in `clmm-testing.md` — but re-verify the Anchor compatibility constraint above for whatever version you land on, since it isn't guaranteed to stay at 0.29.x across SDK releases.
 
 ## Known Quote Token Mints
 
@@ -47,7 +50,7 @@ Use this lookup to determine the Quote token in any pool. The Quote token is the
 
 If the RPC endpoint/cluster being queried is devnet, match against this table instead of mainnet. Devnet mint addresses are test tokens, not official assets, and are not guaranteed to stay stable forever — if a lookup against both tables fails, fall through to the "ask user" rule below rather than guessing.
 
-**Priority**: If one token is USDC, use USDC as Quote. If not, try USDT. If neither, try SOL. If **both** tokens are stablecoins (e.g. USDC/USDT pool), use USDC as Quote. If none of the above are present, ask the user which token they want as the denomination unit.
+**Priority**: Check the tokens against this ordered list of stablecoin/numeraire candidates and use the first match: USDC → USDT → PYUSD → USDH → SOL. (USDC is checked first specifically because if *both* tokens happen to be stablecoins, e.g. a USDC/USDT pool, USDC is the conventional numeraire choice across the ecosystem — this is already guaranteed by checking USDC first, so no separate rule is needed for that case.) If neither token matches any candidate in this list, ask the user which token they want as the denomination unit — do not guess.
 
 > **Cluster detection**: To determine whether to use the mainnet or devnet table, inspect the RPC endpoint URL (e.g. `api.devnet.solana.com` implies devnet) or query the genesis hash if the URL is ambiguous (e.g. a generic Helius/QuickNode RPC).
 
@@ -60,6 +63,9 @@ Instead of just fetching current pending fees, the agent must fetch all transact
 
 ```typescript
 // Agent Logic Pattern for Historical Parsing (fallback path — plain RPC, no Helius MCP):
+// 0. RPC URL: NEVER hardcode `https://api.mainnet-beta.solana.com`. It will strictly rate-limit
+//    `getSignaturesForAddress` and fail with HTTP 429. Prompt the user for an RPC URL (e.g. Helius,
+//    QuickNode) or try to read it from `~/.config/solana/cli/config.yml` if the user is a dev.
 // 1. Fetch all signatures for the Position Mint Address using `getSignaturesForAddress`
 //    ⚠️ PAGINATION: this RPC method returns max 1000 signatures per call.
 //    If the position is old or active, you MUST paginate using the `before` parameter
@@ -91,7 +97,7 @@ If the Helius MCP server is connected (router tools such as `heliusTransaction` 
 // heliusTransaction({ action: "parseTransactions", transactions: [signature] })
 ```
 
-- **Mode choice**: use `mode: "parsed"` for this skill — Helius has built-in decoders for many DeFi programs including Orca Whirlpools, so `open_position`, `increase_liquidity`, `decrease_liquidity`, `collect_fees`, and `collect_reward` instructions should come back with decoded fields rather than raw instruction bytes. If the decoded output does not contain the expected fields (e.g. `liquidity`, `sqrtPrice`), fall back to raw instruction parsing or the plain RPC path — do not guess the field layout.
+- **Mode choice**: use `mode: "parsed"` for this skill — Helius helps with reliable pagination and basic instruction layout. However, it only decodes standard SPL/NFT events, not internal Whirlpool program fields. The agent MUST still parse the raw instruction data (`showRaw: true` or equivalent) to extract `liquidity` and `sqrtPriceX64`.
 - **Pagination**: Helius's `getTransactionHistory` uses a `paginationToken`, not the RPC `before` signature cursor — do not mix the two pagination styles.
 - **Detection, not assumption**: check whether the Helius MCP tool is actually present in the current tool list before relying on it. Never claim to have used it if it is not available — fall back to the manual `getSignaturesForAddress` pattern above and say so if asked.
 - **Fallback rule**: if Helius MCP is not connected, or a call to it errors (e.g. missing API key), fall back to the plain RPC pagination pattern above rather than failing the whole analysis.
@@ -170,7 +176,7 @@ if (isTokenAQuote) {
 
 Always derive `Pa`/`Pb` with the snippet above before using them for:
 - The **Out-of-Range Alert** check in `SKILL.md` ($P_c < P_a$ or $P_c > P_b$)
-- The **Axiom 1** composition check in `skill/clmm-testing.md`
+- The **Axiom 1** composition check in `clmm-testing.md`
 - The **Rebalance Suggestion** in `SKILL.md` (see Step 2c below for the reverse conversion)
 
 ### Step 2c: Converting a Human-Readable Suggested Price Back to Raw, for Tick Snapping
@@ -212,12 +218,12 @@ If a position is fully withdrawn ($L_{new} = 0$), the position is closed.
 // Note: priceBaseInQuote is ALWAYS "Base token price in Quote token" regardless of which is A/B.
 const historicalSegments = [
     {
-        tokenA_Start: new Decimal("10.5"),
-        tokenB_Start: new Decimal("1500.0"),
-        tokenA_End: new Decimal("12.0"),
-        tokenB_End: new Decimal("1300.0"),
-        priceBaseInQuote_End: new Decimal("108.33"),
-        priceBaseInQuote_Start: new Decimal("142.86")  // Optional for segments after the first; MANDATORY if this is segments[0]
+        tokenA_Start: new D("10.5"),
+        tokenB_Start: new D("1500.0"),
+        tokenA_End: new D("12.0"),
+        tokenB_End: new D("1300.0"),
+        priceBaseInQuote_End: new D("108.33"),
+        priceBaseInQuote_Start: new D("142.86")  // Optional for segments after the first; MANDATORY if this is segments[0]
     }
 ];
 ```
@@ -243,6 +249,17 @@ if (positionData.liquidity.gtn(0)) {
         true
     );
 
+    // Derive priceBaseInQuote at the last event, using the SAME inversion rule as Step 2.
+    // This is REQUIRED (not optional) whenever this open segment ends up being segments[0] —
+    // i.e. exactly the single-deposit case this whole step exists to fix. Compute it
+    // unconditionally; it's cheap, and attaching it even when not strictly required does no harm.
+    const lastEventRawPrice = PriceMath.sqrtPriceX64ToPrice(
+        lastEventSqrtPrice, tokenADecimals, tokenBDecimals
+    );
+    const lastEventPriceBaseInQuote = isTokenAQuote
+        ? new D(1).div(lastEventRawPrice)
+        : lastEventRawPrice;
+
     segments.push({
         tokenA_Start: DecimalUtil.fromBN(lastEventAmounts.tokenA, tokenADecimals),
         tokenB_Start: DecimalUtil.fromBN(lastEventAmounts.tokenB, tokenBDecimals),
@@ -253,8 +270,10 @@ if (positionData.liquidity.gtn(0)) {
         tokenA_End: currentTokenA,       // from Step 5
         tokenB_End: currentTokenB,       // from Step 5
         priceBaseInQuote_End: currentPriceBaseInQuote,  // from Step 5
-        // priceBaseInQuote_Start: optional if appending to existing closed segments;
-        // REQUIRED if this is the only segment (segments.length === 0 before push)
+        // ALWAYS attach this. If `segments.length === 0` before this push (single-deposit
+        // case), analyzeSegmentedBreakeven() REQUIRES it and throws if it's missing —
+        // omitting it here would make this very step fail exactly where it matters most.
+        priceBaseInQuote_Start: lastEventPriceBaseInQuote
     });
 }
 // Edge case: single-deposit position (one `open_position` + one `increase_liquidity`,
@@ -262,10 +281,11 @@ if (positionData.liquidity.gtn(0)) {
 // liquidity from that single `increase_liquidity`, and `lastLiquidityEventSqrtPrice`
 // is the sqrtPrice at the time of that event (NOT from `open_position`, which has L=0).
 // There are no closed segments yet, so this Step 3b append creates the ONLY segment
-// in the array — its Start comes from the initial increase_liquidity, its End from Step 5.
+// in the array — its Start comes from the initial increase_liquidity (with
+// priceBaseInQuote_Start derived above), its End from Step 5.
 ```
 
-**Why this matters**: for a position that was deposited once and never modified, the entire `segments[]` array would be empty if this step is skipped — causing `totalIL = 0` regardless of how much the price has moved. That is the worst-case silent failure: no error, just a completely wrong result.
+**Why this matters**: for a position that was deposited once and never modified, the entire `segments[]` array would be empty if this step is skipped — causing `totalIL = 0` regardless of how much the price has moved. That is the worst-case silent failure: no error, just a completely wrong result. The `priceBaseInQuote_Start` derivation above closes a second, related gap: without it, this exact single-deposit case would instead hit `analyzeSegmentedBreakeven`'s mandatory-start-price guard and throw — failing loudly instead of silently, which is better, but still not the correct breakeven result this step is meant to produce.
 
 ### Step 4: Total Fees & Farming Rewards Calculation
 Profitability on Orca comes from two sources: Swap Fees and Farming Rewards.
@@ -278,13 +298,23 @@ Profitability on Orca comes from two sources: Swap Fees and Farming Rewards.
 
    ```typescript
    // GET https://api.jup.ag/price/v3?ids=<mint1>,<mint2>,... (comma-separated, max 50 mints/call)
-   const res = await fetch(`https://api.jup.ag/price/v3?ids=${rewardMint}`);
+   // An API key is REQUIRED for all production use on the Jupiter Developer Platform
+   // (get one at portal.jup.ag and read it from an env var/secret, never hardcode it).
+   // Note: Requests without the `x-api-key` header are not rejected, but they are limited
+   // to a strict 0.5 requests per second (RPS). For AI agent scripts that only make
+   // occasional pricing calls, the free tier without a key is often perfectly adequate.
+   const res = await fetch(`https://api.jup.ag/price/v3?ids=${rewardMint}`, {
+       headers: { "x-api-key": process.env.JUPITER_API_KEY ?? "" }
+   });
    const data = await res.json();
-   const usdPrice = data.data[rewardMint]?.price;
+   // CRITICAL: the response is a FLAT object keyed directly by mint address — there is NO
+   // "data" wrapper, and the price field is called `usdPrice`, not `price`. (V2 used a
+   // data-wrapped, multi-field shape; V3 does not — don't carry over V2 assumptions.)
+   const usdPrice = data[rewardMint]?.usdPrice;
    ```
 
-   - The response is keyed under `data`; each entry exposes `price` (plus `id`, `type`, etc.). There is no separate "quote currency" parameter — V3 always prices in USD.
-   - **Fail closed, do not assume a price of 0 or skip silently**: tokens with unreliable pricing are simply *omitted* from the response (no error, no `null` placeholder). If `data.data[rewardMint]` is missing, treat the reward value for that mint as **unknown** — report it to the user as "value not priced" rather than folding it into `netResult` as if it were worth nothing.
+   - The response is a flat object keyed directly by mint address; each entry exposes `usdPrice`, `decimals`, `blockId`, and `priceChange24h` — there is no `id` or `type` field (that was V2). There is no separate "quote currency" parameter — V3 always prices in USD.
+   - **Fail closed, do not assume a price of 0 or skip silently**: tokens with unreliable pricing are simply *omitted* from the response (no error, no `null` placeholder, no key at all). If `data[rewardMint]` is missing, treat the reward value for that mint as **unknown** — report it to the user as "value not priced" rather than folding it into `netResult` as if it were worth nothing. To find which requested mints were dropped, diff your requested `ids` against `Object.keys(data)`.
    - If the Quote token in this analysis is USDC, `usdPrice` can be used directly as the Quote-denominated price (USDC ≈ $1). For any other Quote token (USDT, SOL, etc.), also fetch that Quote mint's `usdPrice` in the same call and divide: `priceInQuote = usdPrice(rewardMint) / usdPrice(quoteMint)`.
    - This is the same API used for routine "what's this token worth" checks; it is not Whirlpool-specific tooling, so no SDK dependency is added by using it — a plain `fetch` is sufficient and keeps this skill's dependency surface unchanged from the pinned list in the Core Rules section above.
 
@@ -294,7 +324,7 @@ Profitability on Orca comes from two sources: Swap Fees and Farming Rewards.
 While iterating through `decrease_liquidity` events to close segments, also accumulate the total value of liquidity that was withdrawn and returned to the user's wallet. This value must be tracked separately and presented in the final report (see `SKILL.md` Step 7) to prevent users from misreading a low `currentValue` as "lost" when part of it was simply withdrawn.
 
 ```typescript
-// valueInQuote is exported from skill/clmm-math.md
+// valueInQuote is exported from clmm-math.md
 let totalWithdrawnQuote = new D(0);
 
 // For every decrease_liquidity event, record the withdrawn token amounts
@@ -343,19 +373,21 @@ The agent MUST detect this and halt standard Breakeven projections.
 
 ## Agent Action Routing
 
-When a user asks to `/analyze-breakeven <position_mint_address>` for an Orca position:
+**This is the canonical, complete step-by-step routing for this skill.** `SKILL.md` Section 4 mirrors this list as a quick-reference summary — if the two ever disagree (e.g. after a future edit to one but not the other), this list wins.
 
-0. **Validate the Address** (`rules/execution-safety.md` Rule 6 — **DO NOT SKIP**): Construct a `PublicKey` from the supplied position mint address before any RPC/SDK/MCP call. Fail fast with a clear message if it is not valid base58/32-byte input.
+When a user asks to `/position-manager-analyze-breakeven <position_mint_address>` for an Orca position:
+
+0. **Validate the Address** (see the `position-manager-execution-safety` rule — **DO NOT SKIP**): Construct a `PublicKey` from the supplied position mint address before any RPC/SDK/MCP call. Fail fast with a clear message if it is not valid base58/32-byte input.
 1. **Verify Quote Token**: Check mint addresses against the Known Quote Mints table above (mainnet or devnet, depending on cluster).
 2. **Historical Extraction**: Fetch transaction history for the Position Mint — prefer Helius MCP's `getTransactionHistory` (Step 1) if connected, otherwise fall back to `getSignaturesForAddress` + pagination.
 3. **Build Closed Segments via SDK**: Parse `sqrtPriceX64` and `liquidity` at each `increase_liquidity`/`decrease_liquidity` event (these are the segment boundaries — `open_position` is NOT a segment boundary since it has L=0, but its `sqrtPriceX64` provides the `priceBaseInQuote_Start` for the first segment). Use `PoolUtil.getTokenAmountsFromLiquidity` to build `LiquiditySegment[]` with `priceBaseInQuote_End` and — for `segments[0]` specifically — the mandatory `priceBaseInQuote_Start` (Step 2).
-3b. **Close the Open Segment** (Step 3b — **DO NOT SKIP**): If `L_current > 0`, append the currently-open segment using the live state values from Step 5 as the End values. This is the most important segment for active positions; skipping it silently produces `totalIL = 0` for single-deposit positions.
-4. **Derive Range Bounds**: Compute $P_a$/$P_b$ with the correct inversion-and-reorder logic (Step 2b) — required before any out-of-range or rebalance logic touches them.
-4b. **Track Total Withdrawn** (Step 4b): Accumulate the quote-denominated value of every `decrease_liquidity` withdrawal, for display in the final report so users can distinguish "withdrawn to wallet" from "lost to IL".
-5. **Fetch Current State**: Get live token amounts and price for `currentValue` calculation (fetch this first if possible, so Step 3b can reuse the same values without a second RPC call).
-6. **Aggregate Income**: Sum all historical + pending swap fees AND farming rewards, valued at current spot price (non-Quote reward tokens priced via Jupiter Price API v3, Step 4). Convert to Quote token.
-7. **Handle Edge Cases**: Check if $L=0$ currently.
-8. **Calculate PnL**: Pass the segments, total income, and current state into `analyzeSegmentedBreakeven` from `clmm-math.md`.
-9. **Validate**: Run the internal validation checks defined in `clmm-testing.md`, including per-segment IL checks (with tolerance) and out-of-range composition checks.
-10. **Rebalance (if applicable)**: If out of range, derive the suggestion using Step 2c before snapping to ticks.
-11. **Output**: Present the results to the user as described in `SKILL.md` Step 7.
+4. **Track Total Withdrawn** (Step 4b): While iterating the events in the step above, accumulate the quote-denominated value of every `decrease_liquidity` withdrawal at its historical price, for display in the final report so users can distinguish "withdrawn to wallet" from "lost to IL".
+5. **Derive Range Bounds**: Compute $P_a$/$P_b$ with the correct inversion-and-reorder logic (Step 2b) — required before any out-of-range or rebalance logic touches them.
+6. **Fetch Current State**: Get live token amounts and price for `currentValue` calculation. Do this *before* step 7 below — step 7 reuses these exact values, not a second RPC call.
+7. **Close the Open Segment** (Step 3b — **DO NOT SKIP**): If `L_current > 0`, append the currently-open segment using the live state values fetched in step 6 as the End values. This is the most important segment for active positions; skipping it silently produces `totalIL = 0` for single-deposit positions.
+8. **Aggregate Income**: Sum all historical + pending swap fees AND farming rewards, valued at current spot price (non-Quote reward tokens priced via Jupiter Price API v3, Step 4). Convert to Quote token.
+9. **Handle Edge Cases**: Check if $L=0$ currently.
+10. **Calculate PnL**: Pass the segments, total income, and current state into `analyzeSegmentedBreakeven` from `clmm-math.md`.
+11. **Validate**: Run the internal validation checks defined in `clmm-testing.md`, including per-segment IL checks (with tolerance) and out-of-range composition checks.
+12. **Rebalance (if applicable)**: If out of range, derive the suggestion using Step 2c before snapping to ticks.
+13. **Output**: Present the results to the user as described in `SKILL.md` Step 7.
