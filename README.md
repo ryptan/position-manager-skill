@@ -59,7 +59,7 @@ chmod +x install.sh
 
 **On Windows (PowerShell):**
 ```powershell
-./install.ps1
+.\install.ps1
 ```
 
 This copies the contents of `skill/` (including `SKILL.md`, already the entry point inside that folder) into `~/.claude/skills/position-manager/`, the rule into `~/.claude/rules/` (as `position-manager-execution-safety.md`), and the slash command into `~/.claude/commands/` (as `position-manager-analyze-breakeven.md`). The namespace prefix on rules/commands prevents silent overwrites when co-installed with other Solana AI Kit skills.
